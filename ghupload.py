@@ -145,7 +145,7 @@ def opensource_repo(localrepo):
     add_as_remote(localrepo, ghrepo)
     print('push {} to {}'.format(localrepo.path, localrepo.remotes['github'].url))
     if check_for_file(localrepo, 'LICENSE'):
-        add_opensource_license()
+        add_opensource_license(localrepo)
     push_to_github(localrepo)
     return ghrepo
 
