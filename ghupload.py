@@ -7,6 +7,8 @@ import pygit2
 import shutil
 import tempfile
 import time
+import stat
+import sys
 
 
 GHCLIENT = None
@@ -18,12 +20,18 @@ def find_git_repos(directory, bare=True, tree=True):
     # type: (str, bool, bool) -> List[pygit2.Repository]
     git_repos = list()
     for dirpath, dirnames, filenames in os.walk(directory):
+        dirnames = reversed(dirnames)
         try:
             git_repos.append(pygit2.Repository(dirpath))
             dirnames.clear()
         except pygit2.GitError:
             pass
     return git_repos
+
+
+def get_repo_name(repo):
+    # type: (pygit2.Repository) -> str 
+    return os.path.basename(repo.path.strip('/'))
 
 
 def get_github_auth():
@@ -52,7 +60,7 @@ def github_repo(localrepo):
     # type: (pygit2.Repository) -> github.Repository.Repository
     global GHCLIENT
     gh = GHCLIENT
-    name = os.path.basename(localrepo.path.strip('/')) 
+    name = get_repo_name(localrepo) 
     organization = gh.get_organization('iceanimations')
     try:
         ghrepo = organization.get_repo(name)
@@ -75,17 +83,28 @@ def add_as_remote(localrepo, ghrepo):
 
 def check_for_file(localrepo, filename):
     # type: (pygit2.Repository) -> bool
-    return filename in [e.name
-            for e in localrepo.revparse_single('master').tree
-                     if e.type == 3]
+    rootfiles = [e.name
+            for e in localrepo.revparse_single('master').tree if e.type == 3]
+    return filename in rootfiles
+
+
+def remove_readonly(func, path, excinfo):
+    os.chmod(path, stat.S_IWRITE)
+    func(path)
 
 
 def add_opensource_license(localrepo):
     # type: (pygit2.Repository) -> bool
-    reponame = os.path.basename(localrepo.path.strip('/'))
+    reponame = get_repo_name(localrepo)
+    print('Adding open source license to {}'.format(reponame))
     clone_path = os.path.join('D:/', 'clones', reponame)
-    if os.path.isdir(clone_path):
-        shutil.rmtree(clone_path)
+
+    while os.path.isdir(clone_path):
+        try:
+            shutil.rmtree(clone_path, onerror=remove_readonly)
+            break
+        except PermissionError:
+            clone_path += '0'
     else:
         try:
             os.makedirs(os.path.join('D:/', 'clones'))
@@ -110,9 +129,9 @@ def add_opensource_license(localrepo):
         with open(readme_path, 'a') as _readme:
             _readme.write(text)
 
-    index.add_all()
     index.add('LICENSE')
     index.add('README.md')
+    index.add_all()
     index.write()
 
     author = pygit2.Signature('Talha Ahmed', 'talha.ahmed@gmail.com')
@@ -143,22 +162,37 @@ def opensource_repo(localrepo):
     # type: (pygit2.Repository) -> github.Repository.Repository
     ghrepo = github_repo(localrepo)
     add_as_remote(localrepo, ghrepo)
-    print('push {} to {}'.format(localrepo.path, localrepo.remotes['github'].url))
-    if check_for_file(localrepo, 'LICENSE'):
+    print('push {} to {}'.format(
+        get_repo_name(localrepo),
+        localrepo.remotes['github'].url))
+    if not check_for_file(localrepo, 'LICENSE'):
         add_opensource_license(localrepo)
     push_to_github(localrepo)
     return ghrepo
 
 
-def main():
-    repos = find_git_repos(r'r:\Pipe_Repo\Projects\repos')
+def upload_all_repos(path):
+    if not os.path.isdir(path):
+        raise TypeError('{} is not a directory'.format(path))
+    repos = find_git_repos(path)
+    total = len(repos)
     while repos:
         for repo in repos[:]:
             try:
-                opensource_repo(repo)
                 repos.remove(repo)
-            except (pygit2.GitError, github.GithubException):
-                pass
+                if get_repo_name(repo) != 'zz':
+                    opensource_repo(repo)
+                print('success: {} of {} remaining'.format(len(repos), total))
+            except (pygit2.GitError, github.GithubException) as exc:
+                repos.append(repo)
+                print(str(exc) + ':, {} of {} remaining'.format(len(repos), total))
+
+
+def main(_dirs = None):
+    if _dirs is None:
+        _dirs = sys.argv[1:]
+    for _dir in _dirs:
+        upload_all_repos(_dir)
 
 
 if __name__ == '__main__':
