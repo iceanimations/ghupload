@@ -20,7 +20,6 @@ def find_git_repos(directory, bare=True, tree=True):
     # type: (str, bool, bool) -> List[pygit2.Repository]
     git_repos = list()
     for dirpath, dirnames, filenames in os.walk(directory):
-        dirnames = reversed(dirnames)
         try:
             git_repos.append(pygit2.Repository(dirpath))
             dirnames.clear()
